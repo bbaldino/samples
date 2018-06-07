@@ -8,7 +8,8 @@
 
 'use strict';
 
-var localConnection;
+var bridge1Connection;
+var bridge2Connection;
 var remoteConnection;
 var sendChannel;
 var receiveChannel;
@@ -39,18 +40,18 @@ function createConnection() {
   // SCTP is supported from Chrome 31 and is supported in FF.
   // No need to pass DTLS constraint as it is on by default in Chrome 31.
   // For SCTP, reliable and ordered is true by default.
-  // Add localConnection to global scope to make it visible
+  // Add bridge1Connection to global scope to make it visible
   // from the browser console.
-  window.localConnection = localConnection =
+  window.bridge1Connection = bridge1Connection =
       new RTCPeerConnection(servers);
-  trace('Created local peer connection object localConnection');
+  trace('Created local peer connection object bridge1Connection');
 
-  sendChannel = localConnection.createDataChannel('sendDataChannel',
+  sendChannel = bridge1Connection.createDataChannel('sendDataChannel',
       dataConstraint);
   trace('Created send data channel');
 
-  localConnection.onicecandidate = function(e) {
-    onIceCandidate(localConnection, e);
+  bridge1Connection.onicecandidate = function(e) {
+    onIceCandidate(bridge1Connection, e);
   };
   sendChannel.onopen = onSendChannelStateChange;
   sendChannel.onclose = onSendChannelStateChange;
@@ -66,12 +67,21 @@ function createConnection() {
   };
   remoteConnection.ondatachannel = receiveChannelCallback;
 
-  localConnection.createOffer().then(
+  bridge1Connection.createOffer().then(
     gotDescription1,
     onCreateSessionDescriptionError
   );
   startButton.disabled = true;
   closeButton.disabled = false;
+}
+
+function restartIce() {
+    bridge1Connection.createOffer({
+        iceRestart: true
+    }).then(
+        gotDescription1,
+        onCreateSessionDescriptionError
+    );
 }
 
 function onCreateSessionDescriptionError(error) {
@@ -90,9 +100,9 @@ function closeDataChannels() {
   trace('Closed data channel with label: ' + sendChannel.label);
   receiveChannel.close();
   trace('Closed data channel with label: ' + receiveChannel.label);
-  localConnection.close();
+  bridge1Connection.close();
   remoteConnection.close();
-  localConnection = null;
+  bridge1Connection = null;
   remoteConnection = null;
   trace('Closed peer connections');
   startButton.disabled = false;
@@ -106,8 +116,8 @@ function closeDataChannels() {
 }
 
 function gotDescription1(desc) {
-  localConnection.setLocalDescription(desc);
-  trace('Offer from localConnection \n' + desc.sdp);
+  bridge1Connection.setLocalDescription(desc);
+  trace('Offer from bridge1Connection \n' + desc.sdp);
   remoteConnection.setRemoteDescription(desc);
   remoteConnection.createAnswer().then(
     gotDescription2,
@@ -118,15 +128,15 @@ function gotDescription1(desc) {
 function gotDescription2(desc) {
   remoteConnection.setLocalDescription(desc);
   trace('Answer from remoteConnection \n' + desc.sdp);
-  localConnection.setRemoteDescription(desc);
+  bridge1Connection.setRemoteDescription(desc);
 }
 
 function getOtherPc(pc) {
-  return (pc === localConnection) ? remoteConnection : localConnection;
+  return (pc === bridge1Connection) ? remoteConnection : bridge1Connection;
 }
 
 function getName(pc) {
-  return (pc === localConnection) ? 'localPeerConnection' :
+  return (pc === bridge1Connection) ? 'localPeerConnection' :
       'remotePeerConnection';
 }
 
