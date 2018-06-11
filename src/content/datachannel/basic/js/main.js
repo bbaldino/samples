@@ -10,7 +10,7 @@
 
 var bridge1Connection;
 var bridge2Connection;
-var remoteConnection;
+var participantConnection;
 var sendChannel;
 var receiveChannel;
 var dataConstraint;
@@ -18,10 +18,13 @@ var dataChannelSend = document.querySelector('textarea#dataChannelSend');
 var dataChannelReceive = document.querySelector('textarea#dataChannelReceive');
 var startButton = document.querySelector('button#startButton');
 var sendButton = document.querySelector('button#sendButton');
+var restartIceButton = document.querySelector('button#restartIce');
 var closeButton = document.querySelector('button#closeButton');
+var iceRestarted = false;
 
 startButton.onclick = createConnection;
 sendButton.onclick = sendData;
+restartIceButton.onclick = restartIce;
 closeButton.onclick = closeDataChannels;
 
 function enableStartButton() {
@@ -56,32 +59,59 @@ function createConnection() {
   sendChannel.onopen = onSendChannelStateChange;
   sendChannel.onclose = onSendChannelStateChange;
 
-  // Add remoteConnection to global scope to make it visible
-  // from the browser console.
-  window.remoteConnection = remoteConnection =
-      new RTCPeerConnection(servers);
-  trace('Created remote peer connection object remoteConnection');
-
-  remoteConnection.onicecandidate = function(e) {
-    onIceCandidate(remoteConnection, e);
-  };
-  remoteConnection.ondatachannel = receiveChannelCallback;
+  createRemoteConnection();
 
   bridge1Connection.createOffer().then(
     gotDescription1,
     onCreateSessionDescriptionError
   );
   startButton.disabled = true;
+  restartIceButton.disabled = false;
   closeButton.disabled = false;
 }
 
+function createRemoteConnection() {
+  var servers = null;
+  // Add participantConnection to global scope to make it visible
+  // from the browser console.
+  window.participantConnection = participantConnection =
+      new RTCPeerConnection(servers);
+  trace('Created remote peer connection object participantConnection');
+
+  participantConnection.onicecandidate = function(e) {
+    onIceCandidate(participantConnection, e);
+  };
+  participantConnection.ondatachannel = receiveChannelCallback;
+}
+
 function restartIce() {
-    bridge1Connection.createOffer({
-        iceRestart: true
-    }).then(
-        gotDescription1,
-        onCreateSessionDescriptionError
-    );
+    iceRestarted = true;
+    //bridge1Connection.close();
+    bridge2Connection = new RTCPeerConnection(null);
+    bridge2Connection.onicecandidate = function(e) {
+      onIceCandidate(bridge2Connection, e);
+    };
+    sendChannel = bridge2Connection.createDataChannel('sendDataChannel2', { id: 3 });
+    sendChannel.onopen = onSendChannelStateChange;
+    sendChannel.onclose = onSendChannelStateChange;
+
+    bridge2Connection.createOffer().
+        then(desc => {
+            trace('Created bridge2 offer');
+            bridge2Connection.setLocalDescription(desc);
+            participantConnection.setRemoteDescription(desc);
+            participantConnection.createAnswer().then(desc => {
+                participantConnection.setLocalDescription(desc);
+                bridge1Connection.close();
+                bridge2Connection.setRemoteDescription(desc);
+            },
+            err => {
+                trace('Error creating remote answer: ' + err);
+            });
+        },
+        err => {
+            trace('Error creating bridge2 offer: ' + err);
+        });
 }
 
 function onCreateSessionDescriptionError(error) {
@@ -91,7 +121,7 @@ function onCreateSessionDescriptionError(error) {
 function sendData() {
   var data = dataChannelSend.value;
   sendChannel.send(data);
-  trace('Sent Data: ' + data);
+  trace('Sent Data on channel: ' + sendChannel.label + ":" + data);
 }
 
 function closeDataChannels() {
@@ -101,13 +131,14 @@ function closeDataChannels() {
   receiveChannel.close();
   trace('Closed data channel with label: ' + receiveChannel.label);
   bridge1Connection.close();
-  remoteConnection.close();
+  participantConnection.close();
   bridge1Connection = null;
-  remoteConnection = null;
+  participantConnection = null;
   trace('Closed peer connections');
   startButton.disabled = false;
   sendButton.disabled = true;
   closeButton.disabled = true;
+  restartIceButton.disabled = true;
   dataChannelSend.value = '';
   dataChannelReceive.value = '';
   dataChannelSend.disabled = true;
@@ -118,26 +149,32 @@ function closeDataChannels() {
 function gotDescription1(desc) {
   bridge1Connection.setLocalDescription(desc);
   trace('Offer from bridge1Connection \n' + desc.sdp);
-  remoteConnection.setRemoteDescription(desc);
-  remoteConnection.createAnswer().then(
+  participantConnection.setRemoteDescription(desc);
+  participantConnection.createAnswer().then(
     gotDescription2,
     onCreateSessionDescriptionError
   );
 }
 
 function gotDescription2(desc) {
-  remoteConnection.setLocalDescription(desc);
-  trace('Answer from remoteConnection \n' + desc.sdp);
+  participantConnection.setLocalDescription(desc);
+  trace('Answer from participantConnection \n' + desc.sdp);
   bridge1Connection.setRemoteDescription(desc);
 }
 
 function getOtherPc(pc) {
-  return (pc === bridge1Connection) ? remoteConnection : bridge1Connection;
+  if (iceRestarted) {
+    trace('getOtherPc: ice has restarted');
+    return (pc === bridge2Connection) ? participantConnection : bridge2Connection;
+  } else {
+    return (pc === bridge1Connection) ? participantConnection : bridge1Connection;
+  }
 }
 
 function getName(pc) {
-  return (pc === bridge1Connection) ? 'localPeerConnection' :
-      'remotePeerConnection';
+  if (pc === bridge1Connection) return 'bridge1Connection';
+  else if (pc === bridge2Connection) return 'bridge2Connection';
+  return 'participant connection';
 }
 
 function onIceCandidate(pc, event) {
